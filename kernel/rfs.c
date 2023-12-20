@@ -495,8 +495,8 @@ struct vinode *rfs_create(struct vinode *parent, struct dentry *sub_dentry) {
   // panic("You need to implement the code of populating a disk inode in lab4_1.\n" );
   free_dinode->size = 0;
   free_dinode->type = R_FILE;
-  free_dinode->nlinks = 0;
-  free_dinode->blocks = 0;
+  free_dinode->nlinks = 1;
+  free_dinode->blocks = 1;
 
   // DO NOT REMOVE ANY CODE BELOW.
   // allocate a free block for the file
