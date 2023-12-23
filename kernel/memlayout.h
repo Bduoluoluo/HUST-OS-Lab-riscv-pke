@@ -17,4 +17,7 @@
 // start virtual address (4MB) of our simple heap. added @lab2_2
 #define USER_FREE_ADDRESS_START 0x00000000 + PGSIZE * 1024
 
+// max pages num of stack top of user process
+#define USER_STACK_BOTTOM 0x7ffeb000
+
 #endif

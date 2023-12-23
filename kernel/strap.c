@@ -46,8 +46,6 @@ void handle_mtimer_trap() {
   write_csr(sip, 0);
 }
 
-uint64 user_stack_bottom = USER_STACK_TOP - PGSIZE;
-
 //
 // the page fault handler. added @lab2_3. parameters:
 // sepc: the pc when fault happens;
@@ -62,14 +60,11 @@ void handle_user_page_fault(uint64 mcause, uint64 sepc, uint64 stval) {
       // hint: first allocate a new physical page, and then, maps the new page to the
       // virtual address that causes the page fault.
       // panic( "You need to implement the operations that actually handle the page fault in lab2_3.\n" );
-      if (stval < USER_STACK_TOP) {
-        if (ROUNDDOWN(stval, PGSIZE) == user_stack_bottom - PGSIZE) {
-          void* pa = alloc_page();
-          map_pages((pagetable_t)current->pagetable, ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa, prot_to_type(PROT_WRITE | PROT_READ, 1));  
-          user_stack_bottom -= PGSIZE;
-        } else {
-          panic("this address is not available!");
-        }
+      if (stval < USER_STACK_TOP && stval >= USER_STACK_BOTTOM) {
+        void* pa = alloc_page();
+        map_pages((pagetable_t)current->pagetable, ROUNDDOWN(stval, PGSIZE), PGSIZE, (uint64)pa, prot_to_type(PROT_WRITE | PROT_READ, 1));
+      } else {
+        panic("this address is not available!");
       }
       break;
     default:
