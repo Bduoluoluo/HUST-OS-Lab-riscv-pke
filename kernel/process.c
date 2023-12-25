@@ -151,6 +151,9 @@ process* alloc_process() {
 
   procs[i].total_mapped_region = 4;
 
+  // initialize the process's wait status
+  procs[i].wait_status = 0;
+
   // return after initialization.
   return &procs[i];
 }
@@ -164,6 +167,13 @@ int free_process( process* proc ) {
   // but for proxy kernel, it (memory leaking) may NOT be a really serious issue,
   // as it is different from regular OS, which needs to run 7x24.
   proc->status = ZOMBIE;
+
+  if (proc->parent != NULL && (proc->parent->wait_status == -1 || proc->parent->wait_status == proc->pid)) {
+    proc->parent->wait_status = 0;
+    proc->parent->status = READY;
+    proc->parent->trapframe->regs.a0 = proc->pid;
+    insert_to_ready_queue(proc->parent);
+  }
 
   return 0;
 }
@@ -232,7 +242,8 @@ int do_fork( process* parent)
         // segment of parent process.
         // DO NOT COPY THE PHYSICAL PAGES, JUST MAP THEM.
         // panic( "You need to implement the code segment mapping of child in lab3_1.\n" );
-        map_pages((pagetable_t)child->pagetable, parent->mapped_info[i].va, PGSIZE * parent->mapped_info[i].npages, lookup_pa((pagetable_t)parent->pagetable, parent->mapped_info[i].va), prot_to_type(PROT_EXEC | PROT_READ, 1));
+        for (int j = 0; j < parent->mapped_info[i].npages; j ++)
+          map_pages((pagetable_t)child->pagetable, parent->mapped_info[i].va + PGSIZE * j, PGSIZE, lookup_pa((pagetable_t)parent->pagetable, parent->mapped_info[i].va + PGSIZE * j), prot_to_type(PROT_EXEC | PROT_READ, 1));
 
         // after mapping, register the vm region (do not delete codes below!)
         child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
@@ -240,6 +251,18 @@ int do_fork( process* parent)
           parent->mapped_info[i].npages;
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
+        break;
+      case DATA_SEGMENT:
+        for (int j = 0; j < parent->mapped_info[i].npages; j ++) {
+          void* data_pa = alloc_page();
+          memcpy(data_pa, (void*)lookup_pa((pagetable_t)parent->pagetable, parent->mapped_info[i].va + PGSIZE * j), PGSIZE);
+          map_pages((pagetable_t)child->pagetable, parent->mapped_info[i].va + PGSIZE * j, PGSIZE, (uint64)data_pa, prot_to_type(PROT_WRITE | PROT_READ, 1));
+        }
+
+        child->mapped_info[child->total_mapped_region].va = parent->mapped_info[i].va;
+        child->mapped_info[child->total_mapped_region].npages = parent->mapped_info[i].npages;
+        child->mapped_info[child->total_mapped_region].seg_type = DATA_SEGMENT;
+        child->total_mapped_region ++;
         break;
     }
   }
@@ -250,4 +273,17 @@ int do_fork( process* parent)
   insert_to_ready_queue( child );
 
   return child->pid;
+}
+
+int do_wait (int pid) {
+  if (pid == -1) {
+    current->status = BLOCKED;
+    current->wait_status = -1;
+    schedule();
+  } else if (pid > 0 && pid < NPROC && procs[pid].status != FREE && procs[pid].parent->pid == current->pid) {
+    current->status = BLOCKED;
+    current->wait_status = pid;
+    schedule();
+  }
+  return -1;
 }
