@@ -37,6 +37,30 @@ typedef struct elf_prog_header_t {
   uint64 align;  /* Segment alignment */
 } elf_prog_header;
 
+// section header structure
+typedef struct elf_section_header_t {
+  uint32 name;
+  uint32 type;
+  uint64 flags;
+  uint64 addr;
+  uint64 offset;
+  uint64 size;
+  uint32 link;
+  uint32 info;
+  uint64 addralign;
+  uint64 entsize;
+} elf_section_header;
+
+// string and symbol table structure
+typedef struct elf_sym_t {
+  uint32 name;
+  unsigned char info;
+  unsigned char other;
+  uint16 shndx;
+  uint64 value;
+  uint64 size;
+} elf_sym;
+
 #define ELF_MAGIC 0x464C457FU  // "\x7FELF" in little endian
 #define ELF_PROG_LOAD 1
 
@@ -59,5 +83,7 @@ elf_status elf_init(elf_ctx *ctx, void *info);
 elf_status elf_load(elf_ctx *ctx);
 
 void load_bincode_from_host_elf(process *p);
+
+char *elf_get_symbol_name (uint64 value);
 
 #endif

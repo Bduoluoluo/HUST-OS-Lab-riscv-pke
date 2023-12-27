@@ -49,3 +49,7 @@ int printu(const char* s, ...) {
 int exit(int code) {
   return do_user_call(SYS_user_exit, code, 0, 0, 0, 0, 0, 0); 
 }
+
+void print_backtrace (int depth) {
+  do_user_call(SYS_user_print_backtrace, (uint64)depth, 0, 0, 0, 0, 0, 0);
+}

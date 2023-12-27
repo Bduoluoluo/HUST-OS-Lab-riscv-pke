@@ -8,6 +8,12 @@
 #include "riscv.h"
 #include "spike_interface/spike_utils.h"
 
+elf_ctx ctx;
+
+elf_section_header string_table, symbol_table;
+
+char s[1024];
+
 typedef struct elf_info_t {
   spike_file_t *f;
   process *p;
@@ -137,4 +143,33 @@ void load_bincode_from_host_elf(process *p) {
   spike_file_close( info.f );
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+
+  ctx = elfloader;
+  elf_section_header temp_table;
+
+  elf_fpread(&ctx, &temp_table, sizeof(elf_section_header), ctx.ehdr.shoff + sizeof(elf_section_header) * ctx.ehdr.shstrndx);
+  elf_fpread(&ctx, s, temp_table.size, temp_table.offset);
+
+  for (int i = 0; i < ctx.ehdr.shentsize; i ++) {
+    elf_fpread(&ctx, &temp_table, sizeof(elf_section_header), ctx.ehdr.shoff + sizeof(elf_section_header) * i);
+    
+    if (strcmp(s + temp_table.name, ".strtab") == 0)
+      string_table = temp_table;
+    else if (strcmp(s + temp_table.name, ".symtab") == 0)
+      symbol_table = temp_table;
+  }
+
+  elf_fpread(&ctx, s, string_table.size, string_table.offset);
+}
+
+char *elf_get_symbol_name (uint64 value) {
+  for (int i = 0; i < symbol_table.size; i += sizeof(elf_sym)) {
+    elf_sym sym;
+    elf_fpread(&ctx, &sym, sizeof(elf_sym), symbol_table.offset + i);
+
+    if (value >= sym.value && value < sym.value + sym.size)
+      return (s + sym.name);
+  }
+
+  return NULL;
 }
