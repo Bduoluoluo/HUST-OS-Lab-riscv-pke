@@ -110,6 +110,7 @@ int do_read(int fd, char *buf, uint64 count) {
   if (pfile->readable == 0) panic("do_read: no readable file!\n");
 
   char buffer[count + 1];
+  memset(buffer, '\0', count + 1);
   int len = vfs_read(pfile, buffer, count);
   buffer[count] = '\0';
   strcpy(buf, buffer);
@@ -220,4 +221,11 @@ int do_link(char *oldpath, char *newpath) {
 //
 int do_unlink(char *path) {
   return vfs_unlink(path);
+}
+
+bool is_dir_exist (char *path) {
+  if (vfs_opendir(path) == NULL)
+    return FALSE;
+  else
+    return TRUE;
 }

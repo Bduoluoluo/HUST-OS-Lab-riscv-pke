@@ -17,6 +17,8 @@
 
 #include "spike_interface/spike_utils.h"
 
+char current_path[128] = "/";
+
 //
 // implement the SYS_user_print syscall
 //
@@ -103,7 +105,9 @@ ssize_t sys_user_yield() {
 //
 ssize_t sys_user_open(char *pathva, int flags) {
   char* pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_open(pathpa, flags);
+  char tmp_path[128];
+  get_absulute_path(tmp_path, pathpa);
+  return do_open(tmp_path, flags);
 }
 
 //
@@ -173,7 +177,9 @@ ssize_t sys_user_close(int fd) {
 //
 ssize_t sys_user_opendir(char * pathva){
   char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_opendir(pathpa);
+  char tmp_path[128];
+  get_absulute_path(tmp_path, pathpa);
+  return do_opendir(tmp_path);
 }
 
 //
@@ -189,7 +195,9 @@ ssize_t sys_user_readdir(int fd, struct dir *vdir){
 //
 ssize_t sys_user_mkdir(char * pathva){
   char * pathpa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), pathva);
-  return do_mkdir(pathpa);
+  char tmp_path[128];
+  get_absulute_path(tmp_path, pathpa);
+  return do_mkdir(tmp_path);
 }
 
 //
@@ -214,6 +222,41 @@ ssize_t sys_user_link(char * vfn1, char * vfn2){
 ssize_t sys_user_unlink(char * vfn){
   char * pfn = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)vfn);
   return do_unlink(pfn);
+}
+
+ssize_t sys_user_rcwd (char *bufva) {
+  char *bufpa = (char *)user_va_to_pa((pagetable_t)current->pagetable, (void *)bufva);
+  strcpy(bufpa, current_path);
+  return 0;
+}
+
+ssize_t sys_user_ccwd (const char *pathva) {
+  char *pa = (char *)user_va_to_pa((pagetable_t)current->pagetable, (void *)pathva);
+  char tmp_path[128];
+  get_absulute_path(tmp_path, pa);
+  if (is_dir_exist(tmp_path) == FALSE)
+    return -1;
+  strcpy(current_path, tmp_path);
+  return 0;
+}
+
+void get_absulute_path (char *buf, const char *path) {
+  char tmp_path[128];
+  strcpy(tmp_path, current_path);
+  int size = strlen(tmp_path);
+
+  if (path[0] == '.' && path[1] == '.') {
+    int pos = size - 1;
+    while (tmp_path[pos] != '/')
+      pos --;
+    tmp_path[pos] = '\0';
+    strcat(tmp_path, path + 2);
+    if (strlen(tmp_path) == 0)
+      strcat(tmp_path, "/");
+  } else {
+    strcat(tmp_path, path + 1 + (size == 1));
+  }
+  strcpy(buf, tmp_path);
 }
 
 //
@@ -264,6 +307,10 @@ long do_syscall(long a0, long a1, long a2, long a3, long a4, long a5, long a6, l
       return sys_user_link((char *)a1, (char *)a2);
     case SYS_user_unlink:
       return sys_user_unlink((char *)a1);
+    case SYS_user_rcwd:
+      return sys_user_rcwd((char *)a1);
+    case SYS_user_ccwd:
+      return sys_user_ccwd((char *)a1);
     default:
       panic("Unknown syscall %ld \n", a0);
   }
