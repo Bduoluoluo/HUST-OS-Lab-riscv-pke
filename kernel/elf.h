@@ -87,4 +87,6 @@ elf_status elf_load(elf_ctx *ctx);
 
 void load_bincode_from_host_elf(process *p);
 
+void print_debug ();
+
 #endif

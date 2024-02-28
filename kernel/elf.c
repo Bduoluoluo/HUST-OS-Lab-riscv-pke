@@ -8,6 +8,9 @@
 #include "riscv.h"
 #include "spike_interface/spike_utils.h"
 
+elf_ctx ctx;
+char s[1024], debug_line_data[8192];
+
 typedef struct elf_info_t {
   spike_file_t *f;
   process *p;
@@ -104,7 +107,7 @@ void read_uint16(uint16 *out, char **off) {
 * and their code file name index of array "file"
 */
 void make_addr_line(elf_ctx *ctx, char *debug_line, uint64 length) {
-   process *p = ((elf_info *)ctx->info)->p;
+    process *p = ((elf_info *)ctx->info)->p;
     p->debugline = debug_line;
     // directory name char pointer array
     p->dir = (char **)((((uint64)debug_line + length + 7) >> 3) << 3); int dir_ind = 0, dir_base;
@@ -284,4 +287,52 @@ void load_bincode_from_host_elf(process *p) {
   spike_file_close( info.f );
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+
+  ctx = elfloader;
+  elf_sect_header temp_section_header;
+
+  elf_fpread(&ctx, &temp_section_header, sizeof(elf_sect_header), ctx.ehdr.shoff + sizeof(elf_sect_header) * ctx.ehdr.shstrndx);
+  elf_fpread(&ctx, s, temp_section_header.size, temp_section_header.offset);
+
+  for (int i = 0; i < ctx.ehdr.shentsize; i ++) {
+    elf_fpread(&ctx, &temp_section_header, sizeof(elf_sect_header), ctx.ehdr.shoff + sizeof(elf_sect_header) * i);
+    if (strcmp(s + temp_section_header.name, ".debug_line") == 0) {
+      elf_fpread(&ctx, debug_line_data, temp_section_header.size, temp_section_header.offset);
+      make_addr_line(&ctx, debug_line_data, temp_section_header.size);
+    }
+  }
+
+}
+
+void print_debug () {
+  uint64 epc = read_csr(mepc);
+  process *p = ((elf_info *)(&ctx)->info)->p;
+  uint64 line_ind = 0, file_ind = 0, dir_ind = 0;
+
+  for (uint64 i = 0; i < p->line_ind; i ++)
+    if (p->line[i].addr == epc) {
+      line_ind = i;
+      break;
+    }
+  file_ind = p->line[line_ind].file;
+  dir_ind = p->file[file_ind].dir;
+  sprint("Runtime error at %s/%s:%d\n", p->dir[dir_ind], p->file[file_ind].file, p->line[line_ind].line);
+
+  char file_path[128], file_data[8192];
+  strcpy(file_path, p->dir[dir_ind]);
+  int file_path_len = strlen(file_path);
+  file_path[file_path_len] = '/';
+  strcpy(file_path + file_path_len + 1, p->file[file_ind].file);
+
+  spike_file_t* file = spike_file_open(file_path, O_RDONLY, 0);
+  spike_file_read(file, file_data, 8191);
+  
+  char* file_char = file_data;
+  uint64 line_cnt = 1;
+  while (*file_char != '\0') {
+    if (line_cnt == p->line[line_ind].line) sprint("%c", *file_char);
+    if (*file_char == '\n') line_cnt ++;
+    if (line_cnt > p->line[line_ind].line) break;
+    file_char ++;
+  }
 }
