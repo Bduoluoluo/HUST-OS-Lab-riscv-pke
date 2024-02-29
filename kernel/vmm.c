@@ -10,6 +10,7 @@
 #include "util/string.h"
 #include "spike_interface/spike_utils.h"
 #include "util/functions.h"
+#include "process.h"
 
 /* --- utility functions for virtual address mapping --- */
 //
@@ -191,4 +192,132 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
   pte = page_walk(page_dir, va, 0);
   free_page((void*)PTE2PA(*pte));
   *pte ^= PTE_V;
+}
+
+memory_chunk free_memory[1024], buzy_memory[1024], temp_memory[1024];
+int free_cnt = 0, buzy_cnt = 0;
+
+void check_merge () {
+  if (free_cnt > 1 && (free_memory[free_cnt - 1].va >> PGSHIFT) == (free_memory[free_cnt - 2].va >> PGSHIFT) && free_memory[free_cnt - 1].va == free_memory[free_cnt - 2].va + free_memory[free_cnt - 2].size) {
+    free_memory[free_cnt - 2].size += free_memory[free_cnt - 1].size;
+    free_cnt --;
+  }
+  if (free_memory[free_cnt - 1].size == PGSIZE) {
+    if (lookup_pa((pagetable_t)current->pagetable, free_memory[free_cnt - 1].va))
+      user_vm_unmap((pagetable_t)current->pagetable, free_memory[free_cnt - 1].va, PGSIZE, 1);
+  }
+}
+
+void insert_free_memory (uint64 va, uint64 size) {
+  int temp_cnt = free_cnt, flag = 0;
+  for (int i = 0; i < free_cnt; i ++) temp_memory[i] = free_memory[i];
+  free_cnt = 0;
+  
+  for (int i = 0; i < temp_cnt; i ++) {
+    if (!flag && va < temp_memory[i].va) {
+      free_memory[free_cnt].va = va;
+      free_memory[free_cnt].size = size;
+      free_cnt ++;
+      check_merge();
+      flag = 1;
+    }
+    free_memory[free_cnt] = temp_memory[i];
+    free_cnt ++;
+    check_merge();
+  }
+
+  if (!flag) {
+    free_memory[free_cnt].va = va;
+    free_memory[free_cnt].size = size;
+    free_cnt ++;
+    check_merge();
+  }
+}
+
+void insert_buzy_memory (uint64 va, uint64 size) {
+  buzy_memory[buzy_cnt].va = va;
+  buzy_memory[buzy_cnt].size = size;
+  buzy_cnt ++;
+}
+
+uint64 user_alloc_memory (uint64 n) {
+  int cnt = -1;
+
+  for (int i = 0; i < free_cnt; i ++)
+    if (free_memory[i].size >= n || (i < free_cnt - 1 && free_memory[i].va + free_memory[i].size == free_memory[i + 1].va && free_memory[i].size + free_memory[i + 1].size >= n)) {
+      cnt = i;
+      break;
+    }
+
+  if (cnt == -1) { // no suitable memory
+    uint64 va = g_ufree_page;
+    g_ufree_page += PGSIZE;
+    insert_free_memory(va, PGSIZE);
+    for (int i = 0; i < free_cnt; i ++)
+      if (free_memory[i].size >= n || (i < free_cnt - 1 && free_memory[i].va + free_memory[i].size == free_memory[i + 1].va && free_memory[i].size + free_memory[i + 1].size >= n)) {
+        cnt = i;
+        break;
+      }
+  }
+
+  if (free_memory[cnt].size >= n) {
+    if (free_memory[cnt].size == PGSIZE) {
+      void* pa = alloc_page();
+      user_vm_map((pagetable_t)current->pagetable, free_memory[cnt].va, PGSIZE, (uint64)pa, prot_to_type(PROT_WRITE | PROT_READ, 1));
+    }
+
+    uint64 memory_va = free_memory[cnt].va;
+    insert_buzy_memory(free_memory[cnt].va, n);
+    if (free_memory[cnt].size == n) {
+      for (int i = cnt + 1; i < free_cnt; i ++)
+        free_memory[i - 1] = free_memory[i];
+      free_cnt --;
+    } else {
+      free_memory[cnt].va += n;
+      free_memory[cnt].size -= n;
+    }
+
+    return memory_va;
+  } else {
+    if (free_memory[cnt + 1].size == PGSIZE) {
+      void* pa = alloc_page();
+      user_vm_map((pagetable_t)current->pagetable, free_memory[cnt + 1].va, PGSIZE, (uint64)pa, prot_to_type(PROT_WRITE | PROT_READ, 1));
+    }
+
+    uint64 memory_va = free_memory[cnt].va;
+    insert_buzy_memory(free_memory[cnt].va, n);
+    if (free_memory[cnt].size + free_memory[cnt + 1].size == n) {
+      for (int i = cnt + 2; i < free_cnt; i ++)
+        free_memory[i - 2] = free_memory[i];
+      free_cnt -= 2;
+    } else {
+      uint64 del_size = n - free_memory[cnt].size;
+      free_memory[cnt + 1].va += del_size;
+      free_memory[cnt + 1].size -= del_size;      
+      for (int i = cnt + 1; i < free_cnt; i ++)
+        free_memory[i - 1] = free_memory[i];
+    }
+
+    return memory_va;
+  }
+}
+
+void user_free_memory (uint64 va) {
+  int cnt = -1;
+
+  for (int i = 0; i < buzy_cnt; i ++)
+    if (buzy_memory[i].va == va)
+      cnt = i;
+  
+  if ((buzy_memory[cnt].va >> PGSHIFT) == ((buzy_memory[cnt].va + buzy_memory[cnt].size - 1) >> PGSHIFT)) {
+    insert_free_memory(buzy_memory[cnt].va, buzy_memory[cnt].size);
+  } else {
+    uint64 next_va = ((buzy_memory[cnt].va + buzy_memory[cnt].size - 1) >> PGSHIFT) << PGSHIFT;
+    insert_free_memory(buzy_memory[cnt].va, next_va - buzy_memory[cnt].va);
+    insert_free_memory(next_va, buzy_memory[cnt].va + buzy_memory[cnt].size - next_va);
+  }
+
+  for (int i = cnt + 1; i < buzy_cnt; i ++)
+    buzy_memory[i - 1] = buzy_memory[i];
+  buzy_cnt --;
 }
