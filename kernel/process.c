@@ -251,3 +251,50 @@ int do_fork( process* parent)
 
   return child->pid;
 }
+
+Sem sem[32];
+int sem_count = 0;
+
+int sem_new (int value) {
+  int sid = sem_count;
+  sem_count ++;
+
+  sem[sid].value = value;
+  sem[sid].queue_next = NULL;
+
+  return sid;
+}
+
+void insert_to_sem_queue (int sid, process* proc) {
+  if (sem[sid].queue_next == NULL) {
+    proc->status = BLOCKED;
+    proc->queue_next = NULL;
+    sem[sid].queue_next = proc;
+    return;
+  }
+
+  process* p = sem[sid].queue_next;
+  while (p->queue_next != NULL)
+    p = p->queue_next;
+  
+  proc->status = BLOCKED;
+  proc->queue_next = NULL;
+  p->queue_next = proc;
+}
+
+void sem_P (int sid) {
+  sem[sid].value --;
+  if (sem[sid].value < 0) {
+    insert_to_sem_queue(sid, current);
+    schedule();
+  }
+}
+
+void sem_V (int sid) {
+  sem[sid].value ++;
+  if (sem[sid].value <= 0) {
+    process* p = sem[sid].queue_next;
+    sem[sid].queue_next = p->queue_next;
+    insert_to_ready_queue(p);
+  }
+}

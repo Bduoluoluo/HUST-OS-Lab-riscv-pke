@@ -91,6 +91,11 @@ typedef struct process_t {
   int tick_count;
 }process;
 
+typedef struct Sem_t {
+  int value;
+  process *queue_next;
+} Sem;
+
 // switch to run user app
 void switch_to(process*);
 
@@ -102,6 +107,11 @@ process* alloc_process();
 int free_process( process* proc );
 // fork a child from parent
 int do_fork(process* parent);
+
+int sem_new (int value);
+void sem_P (int sid);
+void sem_V (int sid);
+void insert_to_sem_queue (int sid, process* proc);
 
 // current running process
 extern process* current;
