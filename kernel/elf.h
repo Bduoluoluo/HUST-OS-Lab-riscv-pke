@@ -61,8 +61,13 @@ typedef struct elf_ctx_t {
 } elf_ctx;
 
 elf_status elf_init(elf_ctx *ctx, void *info);
+elf_status vfs_elf_init (elf_ctx *ctx, void *info);
 elf_status elf_load(elf_ctx *ctx);
+elf_status vfs_elf_load (elf_ctx *ctx);
 
 void load_bincode_from_host_elf(process *p);
+void vfs_load_bincode_from_host_elf(process *p);
+
+int do_exec (process *p, const char *file);
 
 #endif

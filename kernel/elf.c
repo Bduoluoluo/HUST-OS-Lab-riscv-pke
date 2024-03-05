@@ -9,9 +9,11 @@
 #include "vmm.h"
 #include "pmm.h"
 #include "spike_interface/spike_utils.h"
+#include "vfs.h"
 
 typedef struct elf_info_t {
   spike_file_t *f;
+  struct file *vfs_f;
   process *p;
 } elf_info;
 
@@ -44,6 +46,12 @@ static uint64 elf_fpread(elf_ctx *ctx, void *dest, uint64 nb, uint64 offset) {
   return spike_file_pread(msg->f, dest, nb, offset);
 }
 
+static uint64 vfs_elf_fpread (elf_ctx *ctx, void *dest, uint64 nb, uint64 offset) {
+  elf_info *msg = (elf_info *)ctx->info;
+  vfs_lseek(msg->vfs_f, offset, 0);
+  return vfs_read(msg->vfs_f, dest, nb);
+}
+
 //
 // init elf_ctx, a data structure that loads the elf.
 //
@@ -56,6 +64,13 @@ elf_status elf_init(elf_ctx *ctx, void *info) {
   // check the signature (magic value) of the elf
   if (ctx->ehdr.magic != ELF_MAGIC) return EL_NOTELF;
 
+  return EL_OK;
+}
+
+elf_status vfs_elf_init (elf_ctx *ctx, void *info) {
+  ctx->info = info;
+  if (vfs_elf_fpread(ctx, &ctx->ehdr, sizeof(ctx->ehdr), 0) != sizeof(ctx->ehdr)) return EL_EIO;
+  if (ctx->ehdr.magic != ELF_MAGIC) return EL_NOTELF;
   return EL_OK;
 }
 
@@ -104,6 +119,35 @@ elf_status elf_load(elf_ctx *ctx) {
     ((process*)(((elf_info*)(ctx->info))->p))->total_mapped_region ++;
   }
 
+  return EL_OK;
+}
+
+elf_status vfs_elf_load (elf_ctx *ctx) {
+  elf_prog_header ph_addr;
+  int i, off;
+  for (i = 0, off = ctx->ehdr.phoff; i < ctx->ehdr.phnum; i++, off += sizeof(ph_addr)) {
+    if (vfs_elf_fpread(ctx, (void *)&ph_addr, sizeof(ph_addr), off) != sizeof(ph_addr)) return EL_EIO;
+    if (ph_addr.type != ELF_PROG_LOAD) continue;
+    if (ph_addr.memsz < ph_addr.filesz) return EL_ERR;
+    if (ph_addr.vaddr + ph_addr.memsz < ph_addr.vaddr) return EL_ERR;
+    void *dest = elf_alloc_mb(ctx, ph_addr.vaddr, ph_addr.vaddr, ph_addr.memsz);
+    if (vfs_elf_fpread(ctx, dest, ph_addr.memsz, ph_addr.off) != ph_addr.memsz)
+      return EL_EIO;
+    int j;
+    for( j=0; j<PGSIZE/sizeof(mapped_region); j++ )
+      if( (process*)(((elf_info*)(ctx->info))->p)->mapped_info[j].va == 0x0 ) break;
+    ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].va = ph_addr.vaddr;
+    ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].npages = 1;
+    if( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_EXECUTABLE) ){
+      ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].seg_type = CODE_SEGMENT;
+      sprint( "CODE_SEGMENT added at mapped info offset:%d\n", j );
+    }else if ( ph_addr.flags == (SEGMENT_READABLE|SEGMENT_WRITABLE) ){
+      ((process*)(((elf_info*)(ctx->info))->p))->mapped_info[j].seg_type = DATA_SEGMENT;
+      sprint( "DATA_SEGMENT added at mapped info offset:%d\n", j );
+    }else
+      panic( "unknown program segment encountered, segment flag:%d.\n", ph_addr.flags );
+    ((process*)(((elf_info*)(ctx->info))->p))->total_mapped_region ++;
+  }
   return EL_OK;
 }
 
@@ -169,4 +213,39 @@ void load_bincode_from_host_elf(process *p) {
   spike_file_close( info.f );
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+}
+
+void vfs_load_bincode_from_host_elf(process *p) {
+  arg_buf arg_bug_msg;
+  size_t argc = parse_args(&arg_bug_msg);
+  if (!argc) panic("You need to specify the application program!\n");
+  sprint("Application: %s\n", arg_bug_msg.argv[0]);
+  elf_ctx elfloader;
+  elf_info info;
+  info.vfs_f = vfs_open(arg_bug_msg.argv[0], O_RDONLY);
+  info.p = p;
+  if (IS_ERR_VALUE(info.f)) panic("Fail on openning the input application program.\n");
+  if (vfs_elf_init(&elfloader, &info) != EL_OK)
+    panic("fail to init elfloader.\n");
+  if (vfs_elf_load(&elfloader) != EL_OK) panic("Fail on loading elf.\n");
+  p->trapframe->epc = elfloader.ehdr.entry;
+  vfs_close( info.vfs_f );
+  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+}
+
+int do_exec (process *p, const char *file) {
+  char* filepa = (char*)user_va_to_pa((pagetable_t)(current->pagetable), (void*)file);
+  clear_process(current);
+  sprint("Application: %s\n", filepa);
+  elf_ctx elfloader;
+  elf_info info;
+  info.vfs_f = vfs_open(filepa, O_RDONLY);
+  info.p = p;
+  if (IS_ERR_VALUE(info.f)) return -1;
+  if (vfs_elf_init(&elfloader, &info) != EL_OK) return -1;
+  if (vfs_elf_load(&elfloader) != EL_OK) return -1;
+  p->trapframe->epc = elfloader.ehdr.entry;
+  vfs_close( info.vfs_f );
+  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+  return 0;
 }
