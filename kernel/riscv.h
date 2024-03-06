@@ -147,6 +147,18 @@ static inline uint64 read_tp(void) {
 // write tp, the thread pointer, holding hartid (core number), the index into cpus[].
 static inline void write_tp(uint64 x) { asm volatile("mv tp, %0" : : "r"(x)); }
 
+static inline void mutex_lock (volatile int *counter) {
+  int local;
+  asm volatile("amoswap.w %0, %2, (%1)\n" : "=r"(local) : "r"(counter), "r"(1) : "memory");
+  while (local)
+    asm volatile("amoswap.w %0, %2, (%1)\n" : "=r"(local) : "r"(counter), "r"(1) : "memory");
+}
+
+static inline void mutex_unlock (volatile int *counter) {
+  int local;
+  asm volatile("amoswap.w %0, %2, (%1)\n" : "=r"(local) : "r"(counter), "r"(0) : "memory");
+}
+
 typedef struct riscv_regs_t {
   /*  0  */ uint64 ra;
   /*  8  */ uint64 sp;

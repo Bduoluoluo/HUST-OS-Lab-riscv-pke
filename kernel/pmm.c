@@ -33,10 +33,13 @@ static void create_freepage_list(uint64 start, uint64 end) {
     free_page( (void *)p );
 }
 
+static int page_mutex = 0;
+
 //
 // place a physical page at *pa to the free list of g_free_mem_list (to reclaim the page)
 //
 void free_page(void *pa) {
+  mutex_lock(&page_mutex);
   if (((uint64)pa % PGSIZE) != 0 || (uint64)pa < free_mem_start_addr || (uint64)pa >= free_mem_end_addr)
     panic("free_page 0x%lx \n", pa);
 
@@ -44,6 +47,7 @@ void free_page(void *pa) {
   list_node *n = (list_node *)pa;
   n->next = g_free_mem_list.next;
   g_free_mem_list.next = n;
+  mutex_unlock(&page_mutex);
 }
 
 //
@@ -51,12 +55,14 @@ void free_page(void *pa) {
 // Allocates only ONE page!
 //
 void *alloc_page(void) {
+  mutex_lock(&page_mutex);
   list_node *n = g_free_mem_list.next;
-  uint64 hartid = 0;
-  if (vm_alloc_stage[hartid]) {
-    sprint("hartid = %ld: alloc page 0x%x\n", hartid, n);
+  int cpu_id = read_tp();
+  if (vm_alloc_stage[cpu_id]) {
+    sprint("hartid = %d: alloc page 0x%x\n", cpu_id, n);
   }
   if (n) g_free_mem_list.next = n->next;
+  mutex_unlock(&page_mutex);
   return (void *)n;
 }
 
