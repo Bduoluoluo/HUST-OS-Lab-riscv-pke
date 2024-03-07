@@ -30,6 +30,16 @@ int map_pages(pagetable_t page_dir, uint64 va, uint64 size, uint64 pa, int perm)
   return 0;
 }
 
+void virtual_map_pages (pagetable_t page_dir, uint64 va, uint64 size, uint64 pa, int perm) {
+  uint64 first, last;
+  pte_t *pte;
+  for (first = ROUNDDOWN(va, PGSIZE), last = ROUNDDOWN(va + size - 1, PGSIZE);
+      first <= last; first += PGSIZE, pa += PGSIZE) {
+    if ((pte = page_walk(page_dir, first, 1)) == 0) return;
+    *pte = PA2PTE(pa) | perm | PTE_V | PTE_RSW_0;
+  }
+}
+
 //
 // convert permission code to permission types of PTE
 //
@@ -159,8 +169,10 @@ void *user_va_to_pa(pagetable_t page_dir, void *va) {
   // (va & (1<<PGSHIFT -1)) means computing the offset of "va" inside its page.
   // Also, it is possible that "va" is not mapped at all. in such case, we can find
   // invalid PTE, and should return NULL.
-  panic( "You have to implement user_va_to_pa (convert user va to pa) to print messages in lab2_1.\n" );
-
+  // panic( "You have to implement user_va_to_pa (convert user va to pa) to print messages in lab2_1.\n" );
+  uint64 pa = lookup_pa(page_dir, (uint64)va);
+  if (pa) return (void*)(pa + ((uint64)va & ((1 << PGSHIFT) - 1)));
+  else return NULL;
 }
 
 //
@@ -184,8 +196,11 @@ void user_vm_unmap(pagetable_t page_dir, uint64 va, uint64 size, int free) {
   // (use free_page() defined in pmm.c) the physical pages. lastly, invalidate the PTEs.
   // as naive_free reclaims only one page at a time, you only need to consider one page
   // to make user/app_naive_malloc to behave correctly.
-  panic( "You have to implement user_vm_unmap to free pages using naive_free in lab2_2.\n" );
-
+  // panic( "You have to implement user_vm_unmap to free pages using naive_free in lab2_2.\n" );
+  pte_t *pte;
+  pte = page_walk(page_dir, va, 0);
+  free_page((void*)PTE2PA(*pte));
+  *pte ^= PTE_V;
 }
 
 //

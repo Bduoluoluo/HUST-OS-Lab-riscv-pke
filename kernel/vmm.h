@@ -6,6 +6,9 @@
 
 /* --- utility functions for virtual address mapping --- */
 int map_pages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm);
+
+void virtual_map_pages (pagetable_t page_dir, uint64 va, uint64 size, uint64 pa, int perm);
+
 // permission codes.
 enum VMPermision {
   PROT_NONE = 0,
