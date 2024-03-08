@@ -137,3 +137,35 @@ void load_bincode_from_host_elf(process *p, char *filename) {
 
   sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
 }
+
+int do_exec (process *p, char *cmd, char* para) {
+  clear_process(p);
+  sprint("Application: %s\n", cmd);
+  elf_ctx elfloader;
+  elf_info info;
+  info.f = vfs_open(cmd, O_RDONLY);
+  info.p = p;
+  if (IS_ERR_VALUE(info.f)) return -1;
+  if (elf_init(&elfloader, &info) != EL_OK) return -1;
+  if (elf_load(&elfloader) != EL_OK) return -1;
+  p->trapframe->epc = elfloader.ehdr.entry;
+  vfs_close( info.f );
+  sprint("Application program entry point (virtual address): 0x%lx\n", p->trapframe->epc);
+
+  uint64 va = p->user_heap.heap_top;
+  void* pa = alloc_page();
+  p->user_heap.heap_top += PGSIZE;
+  p->mapped_info[HEAP_SEGMENT].npages ++;
+  user_vm_map((pagetable_t)p->pagetable, va, PGSIZE, (uint64)pa, prot_to_type(PROT_WRITE | PROT_READ, 1));
+
+  p->trapframe->regs.a0 = 1;
+  p->trapframe->regs.a1 = va;
+
+  va = p->user_heap.heap_top;
+  p->user_heap.heap_top += PGSIZE;
+  p->mapped_info[HEAP_SEGMENT].npages ++;
+  user_vm_map((pagetable_t)p->pagetable, va, PGSIZE, (uint64)para, prot_to_type(PROT_WRITE | PROT_READ, 1));
+
+  *((char**) pa) = (char*) va;
+  return 0;
+}

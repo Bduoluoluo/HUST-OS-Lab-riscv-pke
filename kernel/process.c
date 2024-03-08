@@ -155,6 +155,8 @@ process* alloc_process() {
   procs[i].pfiles = init_proc_file_management();
   sprint("in alloc_proc. build proc_file_management successfully.\n");
 
+  procs[i].wait_status = 0;
+
   // return after initialization.
   return &procs[i];
 }
@@ -168,6 +170,13 @@ int free_process( process* proc ) {
   // but for proxy kernel, it (memory leaking) may NOT be a really serious issue,
   // as it is different from regular OS, which needs to run 7x24.
   proc->status = ZOMBIE;
+
+  if (proc->parent != NULL && (proc->parent->wait_status == -1 || proc->parent->wait_status == proc->pid)) {
+    proc->parent->wait_status = 0;
+    proc->parent->status = READY;
+    proc->parent->trapframe->regs.a0 = proc->pid;
+    insert_to_ready_queue(proc->parent);
+  }
 
   return 0;
 }
@@ -244,6 +253,7 @@ int do_fork( process* parent)
           parent->mapped_info[i].npages;
         child->mapped_info[child->total_mapped_region].seg_type = CODE_SEGMENT;
         child->total_mapped_region++;
+        sprint("do_fork map code segment at pa:### of parent to child at va:###.\n");
         break;
     }
   }
@@ -254,4 +264,79 @@ int do_fork( process* parent)
   insert_to_ready_queue( child );
 
   return child->pid;
+}
+
+void clear_process(process* proc) {
+  // init proc[i]'s vm space
+  proc->trapframe = (trapframe *)alloc_page();  //trapframe, used to save context
+  memset(proc->trapframe, 0, sizeof(trapframe));
+
+  // page directory
+  proc->pagetable = (pagetable_t)alloc_page();
+  memset((void *)proc->pagetable, 0, PGSIZE);
+
+  proc->kstack = (uint64)alloc_page() + PGSIZE;   //user kernel stack top
+  uint64 user_stack = (uint64)alloc_page();       //phisical address of user stack bottom
+  proc->trapframe->regs.sp = USER_STACK_TOP;  //virtual address of user stack top
+
+  // allocates a page to record memory regions (segments)
+  proc->mapped_info = (mapped_region*)alloc_page();
+  memset( proc->mapped_info, 0, PGSIZE );
+
+  // map user stack in userspace
+  user_vm_map((pagetable_t)proc->pagetable, USER_STACK_TOP - PGSIZE, PGSIZE,
+    user_stack, prot_to_type(PROT_WRITE | PROT_READ, 1));
+  proc->mapped_info[STACK_SEGMENT].va = USER_STACK_TOP - PGSIZE;
+  proc->mapped_info[STACK_SEGMENT].npages = 1;
+  proc->mapped_info[STACK_SEGMENT].seg_type = STACK_SEGMENT;
+
+  // map trapframe in user space (direct mapping as in kernel space).
+  user_vm_map((pagetable_t)proc->pagetable, (uint64)proc->trapframe, PGSIZE,
+    (uint64)proc->trapframe, prot_to_type(PROT_WRITE | PROT_READ, 0));
+  proc->mapped_info[CONTEXT_SEGMENT].va = (uint64)proc->trapframe;
+  proc->mapped_info[CONTEXT_SEGMENT].npages = 1;
+  proc->mapped_info[CONTEXT_SEGMENT].seg_type = CONTEXT_SEGMENT;
+
+  // map S-mode trap vector section in user space (direct mapping as in kernel space)
+  // we assume that the size of usertrap.S is smaller than a page.
+  user_vm_map((pagetable_t)proc->pagetable, (uint64)trap_sec_start, PGSIZE,
+    (uint64)trap_sec_start, prot_to_type(PROT_READ | PROT_EXEC, 0));
+  proc->mapped_info[SYSTEM_SEGMENT].va = (uint64)trap_sec_start;
+  proc->mapped_info[SYSTEM_SEGMENT].npages = 1;
+  proc->mapped_info[SYSTEM_SEGMENT].seg_type = SYSTEM_SEGMENT;
+
+  // initialize the process's heap manager
+  proc->user_heap.heap_top = USER_FREE_ADDRESS_START;
+  proc->user_heap.heap_bottom = USER_FREE_ADDRESS_START;
+  proc->user_heap.free_pages_count = 0;
+
+  // map user heap in userspace
+  proc->mapped_info[HEAP_SEGMENT].va = USER_FREE_ADDRESS_START;
+  proc->mapped_info[HEAP_SEGMENT].npages = 0;  // no pages are mapped to heap yet.
+  proc->mapped_info[HEAP_SEGMENT].seg_type = HEAP_SEGMENT;
+
+  proc->total_mapped_region = 4;
+
+  // initialize files_struct
+  proc->pfiles = (proc_file_management *)alloc_page();
+  proc->pfiles->cwd = vfs_root_dentry; // by default, cwd is the root
+  proc->pfiles->nfiles = 0;
+
+  for (int fd = 0; fd < MAX_FILES; ++fd)
+    proc->pfiles->opened_files[fd].status = FD_NONE;
+
+  proc->wait_status = 0;
+}
+
+int do_wait (int pid) {
+  if (pid == -1) {
+    current->status = BLOCKED;
+    current->wait_status = -1;
+    schedule();
+  } else if (pid > 0 && pid < NPROC && procs[pid].status != FREE && procs[pid].parent->pid == current->pid) {
+    current->status = BLOCKED;
+    current->wait_status = pid;
+    schedule();
+  }
+  return -1;
 }
